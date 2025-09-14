@@ -1,0 +1,864 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//
+// ===================== CORE USER & AUTH MODELS =====================
+//
+
+model user {
+  user_id            String     @id @default(cuid())
+  user_phone_number  String     @unique
+  user_email         String?    @unique
+  user_name          String
+  user_date_of_birth DateTime?
+  user_gender        Gender?
+  user_avatar        String?
+  user_language      String     @default("en")
+  user_timezone      String     @default("Asia/Kolkata")
+  user_status        UserStatus @default(ACTIVE)
+  user_kyc_status    KycStatus  @default(PENDING)
+  user_tier          UserTier   @default(BASIC)
+  user_created_at    DateTime   @default(now())
+  user_updated_at    DateTime   @updatedAt
+
+  // Relations
+  devices       device[]
+  vpas          virtual_payment_address[]
+  bank_accounts bank_account[]
+  wallets       wallet[]
+  transactions  transaction[]             @relation("TransactionUser")
+  sessions      user_session[]
+  kyc_documents kyc_document[]
+  settings      user_settings?
+  preferences   user_preferences?
+  notifications notification[]
+  disputes      dispute[]
+  rewards       reward_transaction[]
+  limits        user_limit[]
+  risk_profiles risk_profile[]
+  mandates      mandate[]
+  bill_payments bill_payment[]
+  user_offers   user_offer[]
+
+  @@map("users")
+}
+
+model device {
+  device_id                 String     @id @default(cuid())
+  device_user_id            String
+  device_identifier         String     @unique
+  device_type               DeviceType
+  device_os_type            String
+  device_os_version         String
+  device_app_version        String
+  device_model              String
+  device_fingerprint        String
+  device_is_active          Boolean    @default(true)
+  device_is_trusted         Boolean    @default(false)
+  device_is_primary         Boolean    @default(false)
+  device_last_seen_at       DateTime   @default(now())
+  device_registered_at      DateTime   @default(now())
+  device_location           Json?
+  device_push_token         String?
+  device_biometric_enabled  Boolean    @default(false)
+
+  user user @relation(fields: [device_user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([device_user_id, device_is_active])
+  @@map("devices")
+}
+
+model virtual_payment_address {
+  vpa_id              String   @id @default(cuid())
+  vpa_user_id         String
+  vpa_address         String   @unique // user@bank
+  vpa_bank_account_id String
+  vpa_is_primary      Boolean  @default(false)
+  vpa_is_active       Boolean  @default(true)
+  vpa_created_at      DateTime @default(now())
+
+  user         user         @relation(fields: [vpa_user_id], references: [user_id], onDelete: Cascade)
+  bank_account bank_account @relation(fields: [vpa_bank_account_id], references: [bank_account_id])
+
+  @@index([vpa_user_id])
+  @@map("virtual_payment_addresses")
+}
+
+model user_session {
+  user_session_id      String    @id @default(cuid())
+  user_session_user_id String
+  user_session_device_id String
+  user_session_session_id String @unique
+  user_session_ip_address String?
+  user_session_user_agent String?
+  user_session_location Json?
+  user_session_start_time DateTime @default(now())
+  user_session_end_time DateTime?
+  user_session_is_active Boolean @default(true)
+
+  user user @relation(fields: [user_session_user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([user_session_user_id, user_session_is_active])
+  @@map("user_sessions")
+}
+
+//
+// ===================== BANKING & ACCOUNTS =====================
+//
+
+model bank_account {
+  bank_account_id               String          @id @default(cuid())
+  bank_account_user_id          String
+  bank_account_bank_name        String
+  bank_account_bank_code        String // IFSC code
+  bank_account_number           String
+  bank_account_type             BankAccountType @default(SAVINGS)
+  bank_account_holder           String
+  bank_account_nickname         String?
+  bank_account_is_active        Boolean         @default(true)
+  bank_account_is_primary       Boolean         @default(false)
+  bank_account_balance          Decimal         @default(0)
+  bank_account_available_balance Decimal        @default(0)
+  bank_account_last_sync_at     DateTime?
+  bank_account_created_at       DateTime        @default(now())
+
+  user          user                      @relation(fields: [bank_account_user_id], references: [user_id], onDelete: Cascade)
+  vpas          virtual_payment_address[]
+  transactions  transaction[]
+  mandates      mandate[]
+  bill_payments bill_payment[]
+
+  @@index([bank_account_user_id, bank_account_is_active])
+  @@index([bank_account_number])
+  @@map("bank_accounts")
+}
+
+model wallet {
+  wallet_id         String     @id @default(cuid())
+  wallet_user_id    String
+  wallet_type       WalletType @default(PRIMARY)
+  wallet_balance    Decimal    @default(0)
+  wallet_currency   String     @default("INR")
+  wallet_is_active  Boolean    @default(true)
+  wallet_created_at DateTime   @default(now())
+
+  user         user                 @relation(fields: [wallet_user_id], references: [user_id], onDelete: Cascade)
+  transactions wallet_transaction[]
+
+  @@index([wallet_user_id, wallet_type])
+  @@map("wallets")
+}
+
+model wallet_transaction {
+  wallet_transaction_id        String                @id @default(cuid())
+  wallet_transaction_wallet_id String
+  wallet_transaction_type      WalletTransactionType
+  wallet_transaction_amount    Decimal
+  wallet_transaction_description String?
+  wallet_transaction_reference String?
+  wallet_transaction_status    TransactionStatus     @default(COMPLETED)
+  wallet_transaction_created_at DateTime             @default(now())
+
+  wallet wallet @relation(fields: [wallet_transaction_wallet_id], references: [wallet_id], onDelete: Cascade)
+
+  @@index([wallet_transaction_wallet_id, wallet_transaction_created_at])
+  @@map("wallet_transactions")
+}
+
+//
+// ===================== TRANSACTIONS & PAYMENTS =====================
+//
+
+model transaction {
+  transaction_id              String               @id @default(cuid())
+  transaction_reference       String               @unique // UPI transaction reference
+  transaction_user_id         String
+  transaction_bank_account_id String?
+  transaction_type            TransactionType
+  transaction_category        TransactionCategory  @default(OTHERS)
+  transaction_amount          Decimal
+  transaction_currency        String               @default("INR")
+  transaction_status          TransactionStatus    @default(PENDING)
+  transaction_direction       TransactionDirection
+
+  // Payer Details
+  transaction_payer_vpa         String
+  transaction_payer_name        String?
+  transaction_payer_account_ref String?
+
+  // Payee Details  
+  transaction_payee_vpa         String
+  transaction_payee_name        String?
+  transaction_payee_account_ref String?
+
+  // Transaction Details
+  transaction_description String?
+  transaction_merchant_id String?
+  transaction_order_id    String?
+  transaction_invoice_id  String?
+
+  // Technical Details
+  transaction_upi_ref     String? // UPI Reference Number
+  transaction_rrn         String? // Retrieval Reference Number
+  transaction_npci_txn_id String?
+  transaction_gateway_ref String?
+
+  // Metadata
+  transaction_location   Json?
+  transaction_device_id  String?
+  transaction_ip_address String?
+  transaction_channel    Channel @default(APP)
+
+  // Timestamps
+  transaction_initiated_at DateTime  @default(now())
+  transaction_completed_at DateTime?
+  transaction_failed_at    DateTime?
+  transaction_created_at   DateTime  @default(now())
+  transaction_updated_at   DateTime  @updatedAt
+
+  user         user          @relation("TransactionUser", fields: [transaction_user_id], references: [user_id])
+  bank_account bank_account? @relation(fields: [transaction_bank_account_id], references: [bank_account_id])
+
+  @@index([transaction_user_id, transaction_status, transaction_created_at])
+  @@index([transaction_reference])
+  @@index([transaction_payer_vpa, transaction_payee_vpa])
+  @@map("transactions")
+}
+
+//
+// ===================== MERCHANTS & BUSINESS =====================
+//
+
+model merchant {
+  merchant_id                   String           @id @default(cuid())
+  merchant_code                 String           @unique
+  merchant_business_name        String
+  merchant_display_name         String
+  merchant_category             MerchantCategory
+  merchant_subcategory          String?
+  merchant_description          String?
+  merchant_logo                 String?
+
+  // Business Details
+  merchant_business_type        BusinessType
+  merchant_gst_number           String?
+  merchant_pan_number           String?
+  merchant_website              String?
+
+  // Contact Details
+  merchant_email                String?
+  merchant_phone                String?
+  merchant_address              Json?
+
+  // Payment Details
+  merchant_vpa                  String  @unique
+  merchant_settlement_account_id String?
+
+  // Status & Verification
+  merchant_is_verified          Boolean   @default(false)
+  merchant_is_active            Boolean   @default(true)
+  merchant_kyc_status           KycStatus @default(PENDING)
+
+  merchant_created_at           DateTime @default(now())
+  merchant_updated_at           DateTime @updatedAt
+
+  qr_codes qr_code[]
+  payments merchant_payment[]
+  offers   offer[]
+
+  @@index([merchant_category, merchant_is_active])
+  @@index([merchant_code])
+  @@map("merchants")
+}
+
+model qr_code {
+  qr_code_id          String    @id @default(cuid())
+  qr_code_merchant_id String
+  qr_code_identifier  String    @unique
+  qr_code_string      String    @unique
+  qr_code_amount      Decimal? // Static amount or null for dynamic
+  qr_code_description String?
+  qr_code_is_active   Boolean   @default(true)
+  qr_code_expires_at  DateTime?
+  qr_code_created_at  DateTime  @default(now())
+
+  merchant merchant           @relation(fields: [qr_code_merchant_id], references: [merchant_id], onDelete: Cascade)
+  payments merchant_payment[]
+
+  @@index([qr_code_merchant_id, qr_code_is_active])
+  @@map("qr_codes")
+}
+
+model merchant_payment {
+  merchant_payment_id          String            @id @default(cuid())
+  merchant_payment_merchant_id String
+  merchant_payment_qr_code_id  String?
+  merchant_payment_transaction_id String         @unique
+  merchant_payment_order_id    String?
+  merchant_payment_amount      Decimal
+  merchant_payment_status      TransactionStatus @default(PENDING)
+  merchant_payment_payer_vpa   String
+  merchant_payment_payee_name  String?
+  merchant_payment_description String?
+  merchant_payment_created_at  DateTime          @default(now())
+
+  merchant merchant @relation(fields: [merchant_payment_merchant_id], references: [merchant_id])
+  qr_code  qr_code? @relation(fields: [merchant_payment_qr_code_id], references: [qr_code_id])
+
+  @@index([merchant_payment_merchant_id, merchant_payment_status])
+  @@map("merchant_payments")
+}
+
+//
+// ===================== RECURRING PAYMENTS & MANDATES =====================
+//
+
+model mandate {
+  mandate_id              String        @id @default(cuid())
+  mandate_user_id         String
+  mandate_bank_account_id String
+  mandate_identifier      String        @unique
+  mandate_payee_vpa       String
+  mandate_payee_name      String
+  mandate_max_amount      Decimal
+  mandate_frequency       Frequency
+  mandate_start_date      DateTime
+  mandate_end_date        DateTime?
+  mandate_description     String?
+  mandate_status          MandateStatus @default(ACTIVE)
+  mandate_created_at      DateTime      @default(now())
+
+  user         user                @relation(fields: [mandate_user_id], references: [user_id])
+  bank_account bank_account        @relation(fields: [mandate_bank_account_id], references: [bank_account_id])
+  executions   mandate_execution[]
+
+  @@index([mandate_user_id, mandate_status])
+  @@map("mandates")
+}
+
+model mandate_execution {
+  mandate_execution_id         String            @id @default(cuid())
+  mandate_execution_mandate_id String
+  mandate_execution_amount     Decimal
+  mandate_execution_executed_at DateTime?
+  mandate_execution_status     TransactionStatus @default(PENDING)
+  mandate_execution_failure_reason String?
+  mandate_execution_created_at DateTime          @default(now())
+
+  mandate mandate @relation(fields: [mandate_execution_mandate_id], references: [mandate_id], onDelete: Cascade)
+
+  @@index([mandate_execution_mandate_id, mandate_execution_status])
+  @@map("mandate_executions")
+}
+
+//
+// ===================== BILL PAYMENTS & RECHARGE =====================
+//
+
+model biller {
+  biller_id          String         @id @default(cuid())
+  biller_code        String         @unique
+  biller_name        String
+  biller_category    BillerCategory
+  biller_logo        String?
+  biller_description String?
+  biller_is_active   Boolean        @default(true)
+
+  bill_payments bill_payment[]
+
+  @@index([biller_category, biller_is_active])
+  @@map("billers")
+}
+
+model bill_payment {
+  bill_payment_id              String            @id @default(cuid())
+  bill_payment_user_id         String
+  bill_payment_bank_account_id String
+  bill_payment_biller_id       String
+  bill_payment_bill_number     String
+  bill_payment_amount          Decimal
+  bill_payment_due_date        DateTime?
+  bill_payment_status          TransactionStatus @default(PENDING)
+  bill_payment_transaction_id  String?
+  bill_payment_created_at      DateTime          @default(now())
+
+  user         user         @relation(fields: [bill_payment_user_id], references: [user_id])
+  bank_account bank_account @relation(fields: [bill_payment_bank_account_id], references: [bank_account_id])
+  biller       biller       @relation(fields: [bill_payment_biller_id], references: [biller_id])
+
+  @@index([bill_payment_user_id, bill_payment_status])
+  @@map("bill_payments")
+}
+
+//
+// ===================== OFFERS & REWARDS =====================
+//
+
+model offer {
+  offer_id                  String    @id @default(cuid())
+  offer_merchant_id         String?
+  offer_title               String
+  offer_description         String
+  offer_type                OfferType
+  offer_category            String?
+  offer_discount_value      Decimal?
+  offer_max_discount        Decimal?
+  offer_min_amount          Decimal?
+  offer_valid_from          DateTime
+  offer_valid_to            DateTime
+  offer_usage_limit         Int?
+  offer_used_count          Int       @default(0)
+  offer_is_active           Boolean   @default(true)
+  offer_terms_and_conditions String?
+
+  merchant    merchant?    @relation(fields: [offer_merchant_id], references: [merchant_id])
+  user_offers user_offer[]
+
+  @@index([offer_is_active, offer_valid_from, offer_valid_to])
+  @@map("offers")
+}
+
+model user_offer {
+  user_offer_id       String    @id @default(cuid())
+  user_offer_user_id  String
+  user_offer_offer_id String
+  user_offer_used_at  DateTime?
+  user_offer_is_used  Boolean   @default(false)
+  user_offer_created_at DateTime @default(now())
+
+  user  user  @relation(fields: [user_offer_user_id], references: [user_id])
+  offer offer @relation(fields: [user_offer_offer_id], references: [offer_id])
+
+  @@index([user_offer_user_id, user_offer_is_used])
+  @@map("user_offers")
+}
+
+model reward_transaction {
+  reward_transaction_id           String     @id @default(cuid())
+  reward_transaction_user_id      String
+  reward_transaction_type         RewardType
+  reward_transaction_points       Int
+  reward_transaction_description  String?
+  reward_transaction_ref          String?
+  reward_transaction_expires_at   DateTime?
+  reward_transaction_created_at   DateTime   @default(now())
+
+  user user @relation(fields: [reward_transaction_user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([reward_transaction_user_id, reward_transaction_created_at])
+  @@map("reward_transactions")
+}
+
+//
+// ===================== COMPLIANCE & SECURITY =====================
+//
+
+model kyc_document {
+  kyc_document_id           String       @id @default(cuid())
+  kyc_document_user_id      String
+  kyc_document_type         DocumentType
+  kyc_document_number       String
+  kyc_document_url          String?
+  kyc_document_status       KycStatus    @default(PENDING)
+  kyc_document_verified_at  DateTime?
+  kyc_document_expiry_date  DateTime?
+  kyc_document_created_at   DateTime     @default(now())
+
+  user user @relation(fields: [kyc_document_user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([kyc_document_user_id, kyc_document_type])
+  @@map("kyc_documents")
+}
+
+model risk_profile {
+  risk_profile_id             String    @id @default(cuid())
+  risk_profile_user_id        String
+  risk_profile_score          Int       @default(0) // 0-100
+  risk_profile_level          RiskLevel @default(LOW)
+  risk_profile_factors        Json? // Array of risk factors
+  risk_profile_last_assessment DateTime @default(now())
+  risk_profile_created_at     DateTime  @default(now())
+
+  user user @relation(fields: [risk_profile_user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([risk_profile_user_id, risk_profile_level])
+  @@map("risk_profiles")
+}
+
+model user_limit {
+  user_limit_id           String    @id @default(cuid())
+  user_limit_user_id      String
+  user_limit_type         LimitType
+  user_limit_daily_limit  Decimal
+  user_limit_monthly_limit Decimal
+  user_limit_per_txn_limit Decimal
+  user_limit_is_active    Boolean   @default(true)
+  user_limit_created_at   DateTime  @default(now())
+  user_limit_updated_at   DateTime  @updatedAt
+
+  user user @relation(fields: [user_limit_user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([user_limit_user_id, user_limit_type])
+  @@map("user_limits")
+}
+
+model otp_verifications {
+  otp_id          String   @id @default(cuid())
+  otp_phone_number String
+  otp_hash     String
+  otp_purpose     String   // 'login', 'register', 'reset_pin'
+  otp_attempts    Int      @default(0)
+  otp_expires_at   DateTime
+  otp_created_at   DateTime @default(now())
+
+  @@map("otp_verifications")
+  @@unique([otp_phone_number, otp_purpose])
+  @@index([otp_phone_number, otp_purpose, otp_expires_at])
+}
+
+
+//
+// ===================== NOTIFICATIONS & COMMUNICATIONS =====================
+//
+
+model notification {
+  notification_id      String              @id @default(cuid())
+  notification_user_id String
+  notification_type    NotificationType
+  notification_title   String
+  notification_message String
+  notification_data    Json?
+  notification_channel NotificationChannel @default(PUSH)
+  notification_status  NotificationStatus  @default(SENT)
+  notification_read_at DateTime?
+  notification_created_at DateTime         @default(now())
+
+  user user @relation(fields: [notification_user_id], references: [user_id], onDelete: Cascade)
+
+  @@index([notification_user_id, notification_status, notification_created_at])
+  @@map("notifications")
+}
+
+model user_settings {
+  user_settings_id                  String   @id @default(cuid())
+  user_settings_user_id             String   @unique
+  user_settings_biometric_enabled   Boolean  @default(false)
+  user_settings_push_notifications  Boolean  @default(true)
+  user_settings_email_notifications Boolean  @default(true)
+  user_settings_sms_notifications   Boolean  @default(true)
+  user_settings_transaction_alerts  Boolean  @default(true)
+  user_settings_marketing_consent   Boolean  @default(false)
+  user_settings_data_analytics_consent Boolean @default(false)
+  user_settings_auto_pay_enabled    Boolean  @default(false)
+  user_settings_created_at          DateTime @default(now())
+  user_settings_updated_at          DateTime @updatedAt
+
+  user user @relation(fields: [user_settings_user_id], references: [user_id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+model user_preferences {
+  user_preferences_id             String   @id @default(cuid())
+  user_preferences_user_id        String   @unique
+  user_preferences_language       String   @default("en")
+  user_preferences_currency       String   @default("INR")
+  user_preferences_timezone       String   @default("Asia/Kolkata")
+  user_preferences_theme          String   @default("light")
+  user_preferences_transaction_pin String?
+  user_preferences_created_at     DateTime @default(now())
+  user_preferences_updated_at     DateTime @updatedAt
+
+  user user @relation(fields: [user_preferences_user_id], references: [user_id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+//
+// ===================== DISPUTES & SUPPORT =====================
+//
+
+model dispute {
+  dispute_id             String        @id @default(cuid())
+  dispute_user_id        String
+  dispute_transaction_id String
+  dispute_type           DisputeType
+  dispute_reason         String
+  dispute_description    String?
+  dispute_status         DisputeStatus @default(OPEN)
+  dispute_priority       Priority      @default(MEDIUM)
+  dispute_assigned_to    String?
+  dispute_resolution     String?
+  dispute_attachments    String[]      @default([])
+  dispute_created_at     DateTime      @default(now())
+  dispute_updated_at     DateTime      @updatedAt
+
+  user user @relation(fields: [dispute_user_id], references: [user_id])
+
+  @@index([dispute_user_id, dispute_status])
+  @@map("disputes")
+}
+
+//
+// ===================== ENUMS =====================
+//
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  BLOCKED
+}
+
+enum UserTier {
+  BASIC
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+enum DeviceType {
+  ANDROID
+  IOS
+  WEB
+  USSD
+}
+
+enum BankAccountType {
+  SAVINGS
+  CURRENT
+  SALARY
+  OVERDRAFT
+}
+
+enum WalletType {
+  PRIMARY
+  SAVINGS
+  INVESTMENT
+  GIFT
+}
+
+enum TransactionType {
+  P2P_TRANSFER
+  P2M_PAYMENT
+  M2P_REFUND
+  BILL_PAYMENT
+  RECHARGE
+  CASHBACK
+  WALLET_TOPUP
+  WALLET_WITHDRAWAL
+  MANDATE_DEBIT
+}
+
+enum TransactionCategory {
+  FOOD_DINING
+  TRANSPORT
+  SHOPPING
+  ENTERTAINMENT
+  UTILITIES
+  HEALTHCARE
+  EDUCATION
+  FAMILY
+  OTHERS
+}
+
+enum TransactionStatus {
+  INITIATED
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  EXPIRED
+  REFUNDED
+}
+
+enum TransactionDirection {
+  INWARD
+  OUTWARD
+}
+
+enum Channel {
+  APP
+  WEB
+  USSD
+  IVR
+  BRANCH
+}
+
+enum MerchantCategory {
+  RETAIL
+  RESTAURANT
+  FUEL
+  GROCERY
+  PHARMACY
+  ENTERTAINMENT
+  TRANSPORT
+  EDUCATION
+  HEALTHCARE
+  UTILITIES
+  ECOMMERCE
+  OTHERS
+}
+
+enum BusinessType {
+  SOLE_PROPRIETORSHIP
+  PARTNERSHIP
+  PRIVATE_LIMITED
+  PUBLIC_LIMITED
+  LLP
+  TRUST
+  SOCIETY
+  OTHERS
+}
+
+enum Frequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  AS_WHEN_REQUIRED
+}
+
+enum MandateStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  EXPIRED
+}
+
+enum BillerCategory {
+  ELECTRICITY
+  GAS
+  WATER
+  MOBILE
+  DTH
+  BROADBAND
+  INSURANCE
+  LOAN_EMI
+  CREDIT_CARD
+  OTHERS
+}
+
+enum OfferType {
+  CASHBACK
+  DISCOUNT
+  REWARD_POINTS
+  FREE_DELIVERY
+  BUY_ONE_GET_ONE
+}
+
+enum RewardType {
+  TRANSACTION_BONUS
+  REFERRAL_BONUS
+  MILESTONE_BONUS
+  LOYALTY_POINTS
+  CASHBACK_EARNED
+  POINTS_REDEEMED
+}
+
+enum DocumentType {
+  AADHAAR
+  PAN
+  VOTER_ID
+  PASSPORT
+  DRIVING_LICENSE
+  BANK_STATEMENT
+  SALARY_SLIP
+}
+
+enum KycStatus {
+  PENDING
+  UNDER_REVIEW
+  VERIFIED
+  REJECTED
+  EXPIRED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum LimitType {
+  DAILY_TRANSACTION
+  MONTHLY_TRANSACTION
+  PER_TRANSACTION
+  MERCHANT_PAYMENT
+  P2P_TRANSFER
+}
+
+enum NotificationType {
+  TRANSACTION_SUCCESS
+  TRANSACTION_FAILED
+  PAYMENT_RECEIVED
+  PAYMENT_REQUEST
+  SECURITY_ALERT
+  PROMOTIONAL
+  SYSTEM_UPDATE
+  KYC_UPDATE
+  LIMIT_BREACH
+}
+
+enum NotificationChannel {
+  PUSH
+  SMS
+  EMAIL
+  IN_APP
+}
+
+enum NotificationStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum DisputeType {
+  TRANSACTION_NOT_RECEIVED
+  DUPLICATE_TRANSACTION
+  UNAUTHORIZED_TRANSACTION
+  TECHNICAL_FAILURE
+  MERCHANT_DISPUTE
+  OTHERS
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_INVESTIGATION
+  RESOLVED
+  REJECTED
+  CLOSED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum WalletTransactionType {
+  CREDIT
+  DEBIT
+  TRANSFER_IN
+  TRANSFER_OUT
+  CASHBACK
+  REFUND
+}

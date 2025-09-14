@@ -1,0 +1,35 @@
+version: '3.8'
+services:
+  postgres:
+    container_name: xpay_postgres
+    image: postgres:latest
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: x_pay_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - upi_network
+
+  pgadmin:
+    container_name: xpay_pgadmin
+    image: dpage/pgadmin4:latest
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: adhish@admin.com
+      PGADMIN_DEFAULT_PASSWORD: adhish
+    depends_on:
+      - postgres
+    networks:
+      - upi_network
+
+networks:
+  upi_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
