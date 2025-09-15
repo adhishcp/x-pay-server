@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import { ErrorGenerator } from 'src/utils/error-generator';
 import {
@@ -6,10 +6,17 @@ import {
   createResponseData,
 } from 'src/utils/response.builder';
 import { USER_ERROR_CODES } from './error-codes';
+import { ConfigService } from '@nestjs/config';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class UserService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(UserService.name);
+  private readonly UPLOAD_PATH = 'uploads/avatars';
+  constructor(
+    private prisma: PrismaService,
+    private configService: ConfigService,
+  ) {}
 
   async userProfile(userId: string) {
     try {
@@ -46,6 +53,78 @@ export class UserService {
         status: user.user_status,
       };
       return createResponseData(data);
+    } catch (error) {
+      return createErrorData(error);
+    }
+  }
+
+  async updateUserProfile(userId: string, updateProfileDto: UpdateProfileDto) {
+    try {
+      const { email, ...otherFields } = updateProfileDto;
+
+      // check if email already taken by another user
+      if (email) {
+        const existingUser = await this.prisma.user.findUnique({
+          where: { user_email: email, NOT: { user_id: userId } },
+        });
+
+        if (existingUser) {
+          throw new ErrorGenerator(USER_ERROR_CODES.EMAIL_ALREADY_EXISTS);
+        }
+      }
+      // Convert dateOfBirth string to Date object if provided
+      const updateData: any = { ...otherFields };
+      if (updateProfileDto.dateOfBirth) {
+        updateData.dateOfBirth = new Date(updateProfileDto.dateOfBirth);
+      }
+
+      if (email) {
+        updateData.email = email;
+      }
+      //   update user
+      const updatedUser = await this.prisma.user.update({
+        where: { user_id: userId },
+        data: updateData,
+        include: {
+          settings: true,
+          preferences: {
+            select: {
+              user_preferences_id: true,
+              user_preferences_currency: true,
+              user_preferences_language: true,
+              user_preferences_theme: true,
+              user_preferences_timezone: true,
+              user_preferences_created_at: true,
+              user_preferences_updated_at: true,
+              user_preferences_user_id: true,
+            },
+          },
+        },
+      });
+      return createResponseData(updatedUser);
+    } catch (error) {
+      return createErrorData(error);
+    }
+  }
+
+  async getUserSettings(userId: string) {
+    try {
+      const userSettings = await this.prisma.user_settings.findUnique({
+        where: { user_settings_user_id: userId },
+      });
+
+      // Create default settings if not exists
+      const settings = await this.prisma.user_settings.create({
+        data: {
+          user_settings_user_id: userId,
+          user_settings_push_notifications: true,
+          user_settings_email_notifications: true,
+          user_settings_sms_notifications: true,
+          user_settings_transaction_alerts: true,
+        },
+      });
+
+      return createResponseData(settings);
     } catch (error) {
       return createErrorData(error);
     }

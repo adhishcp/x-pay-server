@@ -5,4 +5,10 @@ export const USER_ERROR_CODES = {
     errorCode: 'D001', // custom code
     key: 'USER_NOT_FOUND',
   },
+  EMAIL_ALREADY_EXISTS: {
+    code: 404, // HTTP code
+    message: 'email already exists', // message
+    errorCode: 'D001', // custom code
+    key: 'EMAIL_ALREADY_EXISTS',
+  },
 };
