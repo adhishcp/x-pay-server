@@ -147,7 +147,7 @@ export class AuthService {
     return {
       user: {
         ...user,
-        transactionPin: undefined, // Never return the PIN
+        transactionPin: undefined,
       } as any,
       ...tokens,
       tokenType: 'Bearer',

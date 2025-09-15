@@ -1,7 +1,6 @@
 import type { Request as ExpressRequest } from 'express';
 import type { user as PrismaUser } from '@prisma/client';
 
-// Re-export types for easier importing
 export type Request = ExpressRequest;
 export type User = PrismaUser;
 
