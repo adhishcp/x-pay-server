@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import { ErrorGenerator } from 'src/utils/error-generator';
 import {
@@ -8,6 +8,8 @@ import {
 import { USER_ERROR_CODES } from './error-codes';
 import { ConfigService } from '@nestjs/config';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import path from 'path';
+import * as fs from 'fs/promises';
 
 @Injectable()
 export class UserService {
@@ -127,6 +129,65 @@ export class UserService {
       return createResponseData(settings);
     } catch (error) {
       return createErrorData(error);
+    }
+  }
+
+  async uploadAvatar(userId: string, file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+
+    // Validate file type
+    const allowedMimeTypes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/webp',
+    ];
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      throw new BadRequestException(
+        'Only JPEG, JPG, PNG, and WebP files are allowed',
+      );
+    }
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSize) {
+      throw new BadRequestException('File size must be less than 5MB');
+    }
+
+    try {
+      // Generate unique filename
+      const fileExtension = path.extname(file.originalname);
+      const fileName = `${userId}_${Date.now()}${fileExtension}`;
+      const filePath = path.join(this.UPLOAD_PATH, fileName);
+
+      // Save file
+      await fs.writeFile(filePath, file.buffer);
+
+      // Generate URL (in production, use CDN URL)
+      const baseUrl = this.configService.get(
+        'BASE_URL',
+        'http://localhost:3000',
+      );
+      const avatarUrl = `${baseUrl}/uploads/avatars/${fileName}`;
+
+      // Update user avatar URL in database
+      await this.prisma.user.update({
+        where: { user_id: userId },
+        data: { user_avatar: avatarUrl },
+      });
+
+      this.logger.log(`Avatar uploaded for user: ${userId}`);
+
+      return {
+        url: avatarUrl,
+        fileName,
+        size: file.size,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to upload avatar for user ${userId}:`, error);
+      throw new BadRequestException('Failed to upload avatar');
     }
   }
 }

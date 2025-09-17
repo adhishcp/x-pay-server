@@ -1,6 +1,15 @@
-import { Controller, Get, Put, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Post,
+  Put,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { UserService } from './user.service';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { user } from '@prisma/client';
@@ -9,7 +18,7 @@ import {
   responseBuilder,
 } from 'src/utils/response.builder';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { UpdateUserSettingsDto } from './dto/user-settings.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @ApiTags('User Profile')
 @Controller('user')
@@ -55,5 +64,26 @@ export class UserController {
     }
 
     return responseBuilder(response);
+  }
+
+  @Post('upload-avatar')
+  @UseInterceptors(FileInterceptor('avatar'))
+  @ApiOperation({ summary: 'Upload user avatar' })
+  @ApiConsumes('multipart/form-data')
+  async uploadAvatar(
+    @GetUser() user: user,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+
+    const result = await this.userService.uploadAvatar(user.user_id, file);
+
+    return {
+      success: true,
+      message: 'Avatar uploaded successfully',
+      data: result,
+    };
   }
 }
