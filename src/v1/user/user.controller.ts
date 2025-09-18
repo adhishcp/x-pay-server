@@ -1,7 +1,9 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
+  Logger,
   Post,
   Put,
   UploadedFile,
@@ -19,12 +21,22 @@ import {
 } from 'src/utils/response.builder';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { SingleFileUpload } from 'src/common/decorators/file-upload.decorator';
+import { FileValidationPipe } from 'src/common/pipes/file-validation.pipe';
+import { FileUploadService } from 'src/common/services/file-upload.service';
+import { UpdateUserSettingsDto } from './dto/user-settings.dto';
+import { UpdateUserPreferencesDto } from './dto/user-preferences.dto';
 
 @ApiTags('User Profile')
 @Controller('user')
 @UseGuards(JwtAuthGuard)
 export class UserController {
-  constructor(private userService: UserService) {}
+  private readonly logger = new Logger(UserController.name);
+
+  constructor(
+    private userService: UserService,
+    private fileUploadService: FileUploadService,
+  ) {}
 
   @Get('profile')
   @ApiOperation({ summary: 'Get User Profile' })
@@ -67,23 +79,89 @@ export class UserController {
   }
 
   @Post('upload-avatar')
-  @UseInterceptors(FileInterceptor('avatar'))
-  @ApiOperation({ summary: 'Upload user avatar' })
-  @ApiConsumes('multipart/form-data')
+  @SingleFileUpload('avatar')
   async uploadAvatar(
     @GetUser() user: user,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile(FileValidationPipe) file: Express.Multer.File,
   ) {
-    if (!file) {
-      throw new BadRequestException('No file provided');
+    const result = await this.fileUploadService.saveFile(
+      file,
+      'avatars',
+      `${user.user_id}_`,
+    );
+
+    const response = await this.userService.uploadAvatar(
+      user.user_id,
+      result.url,
+    );
+
+    if (response.error) {
+      return errorResponseBuilder(response);
     }
 
-    const result = await this.userService.uploadAvatar(user.user_id, file);
+    return responseBuilder(response);
+  }
 
-    return {
-      success: true,
-      message: 'Avatar uploaded successfully',
-      data: result,
-    };
+  @Get('settings')
+  @ApiOperation({ summary: 'get user settigns' })
+  async getUSerSettings(@GetUser() user: user) {
+    const response = await this.userService.getSettings(user.user_id);
+
+    if (response.error) {
+      return errorResponseBuilder(response);
+    }
+
+    return responseBuilder(response);
+  }
+
+  @Put('settings')
+  @ApiOperation({ summary: 'Update user settings' })
+  async updateSettings(
+    @GetUser() user: user,
+    @Body() updateSettingsDto: UpdateUserSettingsDto,
+  ) {
+    const updatedSettings = await this.userService.updateSettings(
+      user.user_id,
+      updateSettingsDto,
+    );
+
+    this.logger.log(`Settings updated for user: ${user.user_id}`);
+    if (updatedSettings.error) {
+      return errorResponseBuilder(updatedSettings);
+    }
+
+    return responseBuilder(updatedSettings);
+  }
+
+  @Get('preferences')
+  @ApiOperation({ summary: 'Get user preferences' })
+  async getPreferences(@GetUser() user: user) {
+    const preferences = await this.userService.getPreferences(user.user_id);
+
+    if (preferences.error) {
+      return errorResponseBuilder(preferences);
+    }
+
+    return responseBuilder(preferences);
+  }
+
+  @Put('preferences')
+  @ApiOperation({ summary: 'Update user preferences' })
+  async updatePreferences(
+    @GetUser() user: user,
+    @Body() updatePreferencesDto: UpdateUserPreferencesDto,
+  ) {
+    const updatedPreferences = await this.userService.updatePreferences(
+      user.user_id,
+      updatePreferencesDto,
+    );
+
+    this.logger.log(`Preferences updated for user: ${user.user_id}`);
+
+    if (updatedPreferences.error) {
+      return errorResponseBuilder(updatedPreferences);
+    }
+
+    return responseBuilder(updatedPreferences);
   }
 }
